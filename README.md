@@ -15,6 +15,14 @@ await repositoryChain1Archiver.processChain();
 
 RepositoryChainArchiver will create a `tar.gz` file for each combination of `matchType`, `chain`, and `first_byte`. 
 
+E.g.
+```
+exports
+├── full_match.1.2F.tar.gz
+├── partial_match.1.1D.tar.gz
+└── partial_match.1.3D.tar.gz
+```
+
 E.g. `exports/full_match.1.2F.tar.gz` will contain all the full_match contracts for chain 1 starting with `0x2F`.
 ```
 exports/repository
