@@ -30,6 +30,18 @@ exports/repository
             └── files
 ```
 
+## How it works
+
+RepositoryChainArchiver processes the Sourcify repository using the following approach:
+
+1. Multiple tar streams are opened, one for each combination of `matchType`, `chain`, and `first_byte`.
+2. A stream of files is created using `fast-glob`, which reads the repository directory structure.
+3. As each file is read from the stream, it's analyzed to determine the appropriate tar stream.
+4. The file is then added to the corresponding tar stream based on its `matchType`, `chain`, and `first_byte`.
+5. Once all files are processed, the tar streams are finalized, creating compressed `.tar.gz` archives.
+
+This streaming approach enables efficient parallel processing of large repositories.
+
 ## Installation
 
 ```bash
