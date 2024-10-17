@@ -53,62 +53,59 @@ export default class RepositoryChainArchiver {
     await this.addFileToPack(this.tarStreams[archiveName], filePath);
   }
 
-  processChain() {
-    return new Promise(async (resolve) => {
-      const baseDir = path.resolve(this.repositoryPath);
-      const READ_CONCURRENCY = 50;
+  async processChain() {
+    const baseDir = path.resolve(this.repositoryPath);
+    const READ_CONCURRENCY = 50;
 
-      try {
-        // Create a glob pattern that matches both 'full_match' and 'partial_match'
-        const pattern = `{full_match,partial_match}/${this.chainId}/**/*`;
+    try {
+      // Create a glob pattern that matches both 'full_match' and 'partial_match'
+      const pattern = `{full_match,partial_match}/${this.chainId}/**/*`;
 
-        // Create a stream of file entries using fast-glob
-        const entries = fg.stream(pattern, {
-          cwd: baseDir,
-          onlyFiles: true,
-          concurrency: READ_CONCURRENCY,
-        });
+      // Create a stream of file entries using fast-glob
+      const entries = fg.stream(pattern, {
+        cwd: baseDir,
+        onlyFiles: true,
+        concurrency: READ_CONCURRENCY,
+      });
 
-        for await (const entry of entries) {
-          // Get the relative path from the entry
-          const relativePath = entry as string;
-          const filePath = path.join(this.repositoryPath, relativePath);
+      // For each entry, add the file to the appropriate tar stream
+      for await (const entry of entries) {
+        const relativePath = entry.toString();
+        const filePath = path.join(this.repositoryPath, relativePath);
 
-          // Extract matchType and other necessary information from the relative path
-          const pathParts = relativePath.split("/");
-          const matchType = pathParts[0]; // 'full_match' or 'partial_match'
-          const addressDirName = pathParts[2]; // Assuming path format: 'matchType/chainId/addressDirName/...'
+        // Extract matchType and other necessary information from the relative path
+        const pathParts = relativePath.split("/");
+        const matchType = pathParts[0]; // 'full_match' or 'partial_match'
+        const address = pathParts[2]; // Assuming path format: 'matchType/chainId/addressDirName/...'
 
-          const addressName = addressDirName;
-          const firstTwoChars = addressName.startsWith("0x")
-            ? addressName.slice(2, 4)
-            : addressName.slice(0, 2);
-          const firstByte = firstTwoChars.toLowerCase();
-
-          // Call your processing function
-          if (matchType === "full_match" || matchType === "partial_match") {
-            await this.addFileToPackStream(
-              matchType,
-              this.chainId,
-              firstByte,
-              filePath
-            );
-          }
+        if (!address.startsWith("0x")) {
+          console.log("Skipping non-address folder:", filePath);
+          continue;
         }
 
-        let closedStreams = 0;
-        for (const archiveName of Object.keys(this.tarStreams)) {
-          this.tarStreams[archiveName].on("close", () => {
-            closedStreams++;
-            if (Object.keys(this.tarStreams).length === closedStreams) {
-              resolve(0);
-            }
-          });
-          this.tarStreams[archiveName].finalize();
+        if (matchType !== "full_match" && matchType !== "partial_match") {
+          console.log("Skipping non-match folder:", filePath);
+          continue;
         }
-      } catch (error) {
-        console.error(`Error processing chain ${this.chainId}:`, error);
+
+        const firstTwoChars = address.slice(2, 4);
+        const firstByte = firstTwoChars.toUpperCase();
+
+        // Add the file to the appropriate tar stream
+        await this.addFileToPackStream(
+          matchType,
+          this.chainId,
+          firstByte,
+          filePath
+        );
       }
-    });
+
+      // After all files have been added, finalize the tar streams
+      for (const archiveName of Object.keys(this.tarStreams)) {
+        this.tarStreams[archiveName].finalize();
+      }
+    } catch (error) {
+      console.error(`Error processing chain ${this.chainId}:`, error);
+    }
   }
 }
