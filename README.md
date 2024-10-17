@@ -2,7 +2,7 @@
 
 ## Description
 
-Repository Chain Archiver is a tool designed to efficiently archive repositories. 
+Repository Chain Archiver is a tool designed to efficiently archive the Sourcify repository. 
 
 ```ts
 const repositoryChain1Archiver = new RepositoryChainArchiver(
@@ -11,17 +11,13 @@ const repositoryChain1Archiver = new RepositoryChainArchiver(
 "./exports" // exportPath
 );
 await repositoryChain1Archiver.processChain();
+// exports
+// ├── full_match.1.2F.tar.gz
+// ├── partial_match.1.1D.tar.gz
+// └── partial_match.1.3D.tar.gz
 ```
 
 RepositoryChainArchiver will create a `tar.gz` file for each combination of `matchType`, `chain`, and `first_byte`. 
-
-E.g.
-```
-exports
-├── full_match.1.2F.tar.gz
-├── partial_match.1.1D.tar.gz
-└── partial_match.1.3D.tar.gz
-```
 
 E.g. `exports/full_match.1.2F.tar.gz` will contain all the full_match contracts for chain 1 starting with `0x2F`.
 ```
