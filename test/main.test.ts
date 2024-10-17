@@ -1,9 +1,8 @@
-import { processChain } from "../main";
+import RepositoryChainArchiver from "../src/RepositoryChainArchiver";
 import fs from "fs";
 import path from "path";
 import * as tar from "tar";
 import assert from "assert";
-import os from "os";
 
 // Helper function to get all file paths recursively
 function getAllFilePaths(dir: string): string[] {
@@ -25,8 +24,19 @@ let tempDir: string;
 
 async function runTest() {
   // Run processChain for "1" and "5"
-  await processChain("1");
-  await processChain("5");
+  const repositoryChain1Archiver = new RepositoryChainArchiver(
+    "1",
+    "./repository",
+    "./exports"
+  );
+  await repositoryChain1Archiver.processChain();
+
+  const repositoryChain5Archiver = new RepositoryChainArchiver(
+    "5",
+    "./repository",
+    "./exports"
+  );
+  await repositoryChain5Archiver.processChain();
 
   const exportsDir = path.resolve("./exports");
   const repositoryDir = path.resolve("./repository");
@@ -57,7 +67,7 @@ async function runTest() {
   // Compare the file lists
   assert.deepStrictEqual(
     exportedFiles,
-    repositoryFiles, // Adjust if necessary based on archive structure
+    repositoryFiles,
     "Exported files do not match repository files"
   );
 
