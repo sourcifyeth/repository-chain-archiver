@@ -139,6 +139,7 @@ export default class RepositoryChainsArchiver {
         Body: fileContent,
       })
     );
+    console.log(`Uploaded ${s3Key} to ${bucketName}`);
   }
 
   private async deleteOldBackups(
@@ -270,6 +271,7 @@ export default class RepositoryChainsArchiver {
 
       // Clean up local files
       await fs.promises.rm(this.exportPath, { recursive: true, force: true });
+      console.log("Upload completed successfully");
     } catch (error) {
       console.error("Error during upload:", error);
       throw error;
