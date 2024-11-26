@@ -1,8 +1,8 @@
 {
   "type": "module",
   "scripts": {
-    "start": "rm -rf ./exports && tsx src/main.ts",
-    "test": "rm -rf ./exports && tsx test/main.test.ts"
+    "start": "rm -rf ./exports/* && tsx src/main.ts",
+    "test": "rm -rf ./exports/* && tsx test/main.test.ts"
   },
   "dependencies": {
     "@types/node": "^22.7.6",

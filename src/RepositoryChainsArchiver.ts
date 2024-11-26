@@ -270,7 +270,15 @@ export default class RepositoryChainsArchiver {
       await this.deleteOldBackups(s3Client, s3Config.bucketName);
 
       // Clean up local files
-      await fs.promises.rm(this.exportPath, { recursive: true, force: true });
+      const files = await fs.promises.readdir(this.exportPath);
+      await Promise.all(
+        files.map((file) =>
+          fs.promises.rm(path.join(this.exportPath, file), {
+            recursive: true,
+            force: true,
+          })
+        )
+      );
       console.log("Upload completed successfully");
     } catch (error) {
       console.error("Error during upload:", error);
