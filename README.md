@@ -2,19 +2,27 @@
 
 ## Description
 
-Repository Chain Archiver is a tool designed to efficiently archive the Sourcify repository. 
+Repository Chain Archiver is a tool designed to efficiently archive the Sourcify repository. It also supports uploading the archives to an S3-compatible object storage.
 
 ```ts
-const repositoryChain1Archiver = new RepositoryChainArchiver(
-"1", // chainId
-"./repository", // repositoryPath
-"./exports" // exportPath
+const repositoryChainsArchiver = new RepositoryChainsArchiver(
+  ["1"], // chainIds
+  "./repository", // repositoryPath
+  "./exports" // exportPath
 );
-await repositoryChain1Archiver.processChain();
+await repositoryChainsArchiver.processChain();
 // exports
 // ├── full_match.1.2F.tar.gz
 // ├── partial_match.1.1D.tar.gz
 // └── partial_match.1.3D.tar.gz
+
+await repositoryChainsArchiver.uploadS3({
+  bucketName: process.env.S3_BUCKET,
+  region: process.env.S3_REGION,
+  accessKeyId: process.env.S3_ACCESS_KEY_ID,
+  secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+  endpoint: process.env.S3_ENDPOINT,
+});
 ```
 
 RepositoryChainArchiver will create a `tar.gz` file for each combination of `matchType`, `chain`, and `first_byte`. 
@@ -30,9 +38,11 @@ exports/repository
             └── files
 ```
 
+Finally, the archives are uploaded to an S3-compatible object storage.
+
 ## How it works
 
-RepositoryChainArchiver processes the Sourcify repository using the following approach:
+RepositoryChainsArchiver processes the Sourcify repository using the following approach:
 
 1. Multiple tar streams are opened, one for each combination of `matchType`, `chain`, and `first_byte`.
 2. A stream of files is created using `fast-glob`, which reads the repository directory structure.
@@ -50,8 +60,11 @@ npm install
 
 ## Usage
 
+Set the environment variables in the `.env` file and run the script.
 
-// TODO: Add usage instructions
+```bash
+npm start
+```
 
 ## Testing
 

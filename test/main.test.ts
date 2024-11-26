@@ -1,4 +1,4 @@
-import RepositoryChainArchiver from "../src/RepositoryChainArchiver";
+import RepositoryChainsArchiver from "../src/RepositoryChainsArchiver";
 import fs from "fs";
 import path from "path";
 import * as tar from "tar";
@@ -24,19 +24,12 @@ let tempDir: string;
 
 async function runTest() {
   // Run processChain for "1" and "5"
-  const repositoryChain1Archiver = new RepositoryChainArchiver(
-    "1",
+  const repositoryChainsArchiver = new RepositoryChainsArchiver(
+    ["1", "5"],
     "./repository",
     "./exports"
   );
-  await repositoryChain1Archiver.processChain();
-
-  const repositoryChain5Archiver = new RepositoryChainArchiver(
-    "5",
-    "./repository",
-    "./exports"
-  );
-  await repositoryChain5Archiver.processChain();
+  await repositoryChainsArchiver.processChains();
 
   const exportsDir = path.resolve("./exports");
   const repositoryDir = path.resolve("./repository");
