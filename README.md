@@ -2,32 +2,34 @@
 
 ## Description
 
-Repository Chain Archiver is a tool designed to efficiently archive the Sourcify repository. It also supports uploading the archives to an S3-compatible object storage.
+Repository Chain Archiver is a tool designed to efficiently archive the Sourcify repository. It also uploads the archives to an S3-compatible object storage.
 
 ```ts
-const repositoryChainsArchiver = new RepositoryChainsArchiver(
-  ["1"], // chainIds
-  "./repository", // repositoryPath
-  "./exports" // exportPath
-);
-await repositoryChainsArchiver.processChain();
-// exports
-// ├── full_match.1.2F.tar.gz
-// ├── partial_match.1.1D.tar.gz
-// └── partial_match.1.3D.tar.gz
-
-await repositoryChainsArchiver.uploadS3({
+const s3Config = {
   bucketName: process.env.S3_BUCKET,
   region: process.env.S3_REGION,
   accessKeyId: process.env.S3_ACCESS_KEY_ID,
   secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
   endpoint: process.env.S3_ENDPOINT,
-});
+};
+
+const repositoryChainsArchiver = new RepositoryChainsArchiver(
+  ["1"], // chainIds
+  "./repository", // repositoryPath
+  "./exports", // exportPath
+  s3Config
+);
+await repositoryChainsArchiver.processAndUpload();
+// exports
+// ├── full_match.1.2F.tar.gz
+// ├── partial_match.1.1D.tar.gz
+// └── partial_match.1.3D.tar.gz
 ```
 
-RepositoryChainArchiver will create a `tar.gz` file for each combination of `matchType`, `chain`, and `first_byte`. 
+RepositoryChainArchiver will create a `tar.gz` file for each combination of `matchType`, `chain`, and `first_byte`.
 
 E.g. `exports/full_match.1.2F.tar.gz` will contain all the full_match contracts for chain 1 starting with `0x2F`.
+
 ```
 exports/repository
 └── full_match

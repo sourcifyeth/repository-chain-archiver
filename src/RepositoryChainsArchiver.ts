@@ -26,13 +26,25 @@ function createPack(outputPath: string): tar.Pack {
 }
 
 export default class RepositoryChainsArchiver {
-  private tarStreams: Record<string, tar.Pack> = {};
+  private s3Client: S3Client;
+  private s3BucketName: string;
 
   constructor(
     private chainIds: string[],
     private repositoryPath: string,
-    private exportPath: string
-  ) {}
+    private exportPath: string,
+    s3Config: S3Config
+  ) {
+    this.s3Client = new S3Client({
+      region: s3Config.region,
+      credentials: {
+        accessKeyId: s3Config.accessKeyId,
+        secretAccessKey: s3Config.secretAccessKey,
+      },
+      endpoint: s3Config.endpoint,
+    });
+    this.s3BucketName = s3Config.bucketName;
+  }
 
   // Function to add files to the tar stream
   addFileToPack(pack: tar.Pack, filePath: string) {
@@ -51,105 +63,107 @@ export default class RepositoryChainsArchiver {
     });
   }
 
-  async addFileToPackStream(
-    match: "full_match" | "partial_match",
-    chain: string,
-    byte: string,
-    filePath: string
-  ) {
-    const archiveName = `${match}.${chain}.${byte}.tar.gz`;
-    if (!this.tarStreams[archiveName]) {
-      this.tarStreams[archiveName] = createPack(
-        path.join(this.exportPath, archiveName)
-      );
-    }
-
-    await this.addFileToPack(this.tarStreams[archiveName], filePath);
-  }
-
-  async processChains() {
+  async processAndUpload() {
     await fs.promises.mkdir(this.exportPath, { recursive: true });
     const baseDir = path.resolve(this.repositoryPath);
     const READ_CONCURRENCY = 50;
 
+    const timestamp = new Date();
+    const timestampString = timestamp
+      .toISOString()
+      .replace(/[:]/g, "-")
+      .split(".")[0];
+    const backupName = `sourcify-repository-${timestampString}`;
+
     try {
-      // Create a glob pattern that matches both 'full_match' and 'partial_match'
-      const pattern = `{full_match,partial_match}/{${this.chainIds.join(
-        ","
-      )}}/**/*`;
+      const uploadedFiles: { path: string; sizeInBytes: number }[] = [];
+      for (const matchType of ["full_match", "partial_match"]) {
+        for (const chainId of this.chainIds) {
+          for (let i = 0; i < 256; i++) {
+            const byte = i.toString(16).padStart(2, "0");
+            console.log(`Processing ${matchType} ${chainId} ${byte}`);
+            const pattern = `${matchType}/${chainId}/0x${byte}*/**/*`;
+            const entries = fg.stream(pattern, {
+              cwd: baseDir,
+              onlyFiles: true,
+              concurrency: READ_CONCURRENCY,
+              caseSensitiveMatch: false,
+            });
 
-      // Create a stream of file entries using fast-glob
-      const entries = fg.stream(pattern, {
-        cwd: baseDir,
-        onlyFiles: true,
-        concurrency: READ_CONCURRENCY,
-      });
+            // Create tar stream for current byte
+            const archiveName = `${matchType}.${chainId}.${byte}.tar.gz`;
+            const localPath = path.join(this.exportPath, archiveName);
+            let currentTarStream: tar.Pack | undefined;
 
-      // For each entry, add the file to the appropriate tar stream
-      for await (const entry of entries) {
-        const relativePath = entry.toString();
-        const filePath = path.join(this.repositoryPath, relativePath);
+            for await (const entry of entries) {
+              if (!currentTarStream) {
+                currentTarStream = createPack(localPath);
+              }
 
-        // Extract matchType and other necessary information from the relative path
-        const pathParts = relativePath.split("/");
-        const matchType = pathParts[0]; // 'full_match' or 'partial_match'
-        const chainId = pathParts[1]; // 'full_match' or 'partial_match'
-        const address = pathParts[2]; // Assuming path format: 'matchType/chainId/addressDirName/...'
+              const relativePath = entry.toString();
+              const filePath = path.join(this.repositoryPath, relativePath);
 
-        if (!address.startsWith("0x")) {
-          console.log("Skipping non-address folder:", filePath);
-          continue;
+              const pathParts = relativePath.split("/");
+              const address = pathParts[2]; // Assuming path format: 'matchType/chainId/addressDirName/...'
+
+              if (!address.startsWith("0x")) {
+                console.log("Skipping non-address folder:", filePath);
+                continue;
+              }
+
+              await this.addFileToPack(currentTarStream, filePath);
+            }
+
+            if (currentTarStream) {
+              currentTarStream.finalize();
+
+              // Upload file
+              const s3Key = `${backupName}/${archiveName}`;
+              await this.uploadFile(localPath, s3Key);
+              uploadedFiles.push({
+                path: s3Key,
+                sizeInBytes: fs.statSync(localPath).size,
+              });
+
+              // Delete file
+              await fs.promises.rm(localPath, {
+                recursive: true,
+                force: true,
+              });
+              console.log(`Deleted local file: ${localPath}`);
+            }
+          }
         }
-
-        if (matchType !== "full_match" && matchType !== "partial_match") {
-          console.log("Skipping non-match folder:", filePath);
-          continue;
-        }
-
-        const firstTwoChars = address.slice(2, 4);
-        const firstByte = firstTwoChars.toUpperCase();
-
-        // Add the file to the appropriate tar stream
-        await this.addFileToPackStream(matchType, chainId, firstByte, filePath);
       }
-
-      // After all files have been added, finalize the tar streams
-      for (const archiveName of Object.keys(this.tarStreams)) {
-        this.tarStreams[archiveName].finalize();
-      }
+      this.uploadManifest(backupName, uploadedFiles);
+      this.deleteOldBackups();
+      console.log("Deleted old backups");
     } catch (error) {
       console.error(
         `Error processing chains ${this.chainIds.join(",")}:`,
         error
       );
     }
+    console.log("Done");
   }
 
-  private async uploadFile(
-    s3Client: S3Client,
-    bucketName: string,
-    localPath: string,
-    s3Key: string
-  ): Promise<void> {
+  private async uploadFile(localPath: string, s3Key: string): Promise<void> {
     const fileContent = await fs.promises.readFile(localPath);
-    await s3Client.send(
+    await this.s3Client.send(
       new PutObjectCommand({
-        Bucket: bucketName,
+        Bucket: this.s3BucketName,
         Key: s3Key,
         Body: fileContent,
       })
     );
-    console.log(`Uploaded ${s3Key} to ${bucketName}`);
+    console.log(`Uploaded ${s3Key} to ${this.s3BucketName}`);
   }
 
-  private async deleteOldBackups(
-    s3Client: S3Client,
-    bucketName: string
-  ): Promise<void> {
+  private async deleteOldBackups(): Promise<void> {
     // List only the root folders with the prefix
-    const listResponse = await s3Client.send(
+    const listResponse = await this.s3Client.send(
       new ListObjectsV2Command({
-        Bucket: bucketName,
+        Bucket: this.s3BucketName,
         Prefix: "sourcify-repository-",
         Delimiter: "/", // This will only list the root folders
       })
@@ -171,32 +185,28 @@ export default class RepositoryChainsArchiver {
 
     // Delete each old folder recursively
     for (const folder of foldersToDelete) {
-      await this.deleteFolderContents(s3Client, bucketName, folder);
+      await this.deleteFolderContents(folder);
     }
   }
 
-  private async deleteFolderContents(
-    s3Client: S3Client,
-    bucket: string,
-    prefix: string
-  ): Promise<void> {
+  private async deleteFolderContents(prefix: string): Promise<void> {
     let continuationToken: string | undefined;
 
     do {
       // List objects in the folder (paginated)
       const listCommand = new ListObjectsV2Command({
-        Bucket: bucket,
+        Bucket: this.s3BucketName,
         Prefix: prefix,
         ContinuationToken: continuationToken,
       });
 
-      const listResponse = await s3Client.send(listCommand);
+      const listResponse = await this.s3Client.send(listCommand);
 
       if (listResponse.Contents && listResponse.Contents.length > 0) {
         // Delete objects in batches
-        await s3Client.send(
+        await this.s3Client.send(
           new DeleteObjectsCommand({
-            Bucket: bucket,
+            Bucket: this.s3BucketName,
             Delete: {
               Objects: listResponse.Contents.map((obj) => ({ Key: obj.Key })),
               Quiet: false,
@@ -209,80 +219,33 @@ export default class RepositoryChainsArchiver {
     } while (continuationToken);
   }
 
-  async uploadS3(s3Config: S3Config): Promise<void> {
-    const s3Client = new S3Client({
-      region: s3Config.region,
-      credentials: {
-        accessKeyId: s3Config.accessKeyId,
-        secretAccessKey: s3Config.secretAccessKey,
-      },
-      endpoint: s3Config.endpoint,
+  async uploadManifest(
+    backupName: string,
+    uploadedFiles: { path: string; sizeInBytes: number }[]
+  ): Promise<void> {
+    // Generate manifest
+    const manifest = {
+      description:
+        "Manifest file for when the Sourcify file repository was uploaded",
+      timestamp: Date.now(),
+      dateStr: new Date().toISOString(),
+      files: uploadedFiles,
+    };
+
+    // Write manifest locally
+    const manifestPath = path.join(this.exportPath, "manifest.json");
+    await fs.promises.writeFile(
+      manifestPath,
+      JSON.stringify(manifest, null, 2)
+    );
+
+    // Upload manifest files
+    await this.uploadFile(manifestPath, `${backupName}/manifest.json`);
+    await this.uploadFile(manifestPath, "manifest.json");
+
+    // Delete local manifest file
+    await fs.promises.rm(manifestPath, {
+      force: true,
     });
-    try {
-      const timestamp = new Date()
-        .toISOString()
-        .replace(/[:]/g, "-")
-        .split(".")[0];
-      const backupName = `sourcify-repository-${timestamp}`;
-
-      // Generate manifest
-      const manifest = {
-        description:
-          "Manifest file for when the Sourcify file repository was uploaded",
-        timestamp: Date.now(),
-        dateStr: new Date().toISOString(),
-        files: Object.keys(this.tarStreams).map((archiveName) => ({
-          path: `${backupName}/${archiveName}`,
-          sizeInBytes: fs.statSync(path.join(this.exportPath, archiveName))
-            .size,
-        })),
-      };
-
-      // Write manifest locally
-      const manifestPath = path.join(this.exportPath, "manifest.json");
-      await fs.promises.writeFile(
-        manifestPath,
-        JSON.stringify(manifest, null, 2)
-      );
-
-      // Upload all tar files
-      for (const archiveName of Object.keys(this.tarStreams)) {
-        const localPath = path.join(this.exportPath, archiveName);
-        const s3Key = `${backupName}/${archiveName}`;
-        await this.uploadFile(s3Client, s3Config.bucketName, localPath, s3Key);
-      }
-
-      // Upload manifest files
-      await this.uploadFile(
-        s3Client,
-        s3Config.bucketName,
-        manifestPath,
-        `${backupName}/manifest.json`
-      );
-      await this.uploadFile(
-        s3Client,
-        s3Config.bucketName,
-        manifestPath,
-        "manifest.json"
-      );
-
-      // Clean up old backups
-      await this.deleteOldBackups(s3Client, s3Config.bucketName);
-
-      // Clean up local files
-      const files = await fs.promises.readdir(this.exportPath);
-      await Promise.all(
-        files.map((file) =>
-          fs.promises.rm(path.join(this.exportPath, file), {
-            recursive: true,
-            force: true,
-          })
-        )
-      );
-      console.log("Upload completed successfully");
-    } catch (error) {
-      console.error("Error during upload:", error);
-      throw error;
-    }
   }
 }
