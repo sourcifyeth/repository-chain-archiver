@@ -121,7 +121,7 @@ export default class RepositoryChainsArchiver {
               const s3Key = `${backupName}/${archiveName}`;
               await this.uploadFile(localPath, s3Key);
               uploadedFiles.push({
-                path: s3Key,
+                path: `/${s3Key}`,
                 sizeInBytes: fs.statSync(localPath).size,
               });
 
