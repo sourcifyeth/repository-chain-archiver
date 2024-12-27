@@ -135,8 +135,8 @@ export default class RepositoryChainsArchiver {
           }
         }
       }
-      this.uploadManifest(backupName, uploadedFiles);
-      this.deleteOldBackups();
+      await this.uploadManifest(backupName, uploadedFiles);
+      await this.deleteOldBackups();
       console.log("Deleted old backups");
     } catch (error) {
       console.error(
