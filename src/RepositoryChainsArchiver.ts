@@ -82,6 +82,8 @@ export default class RepositoryChainsArchiver {
 
     try {
       const uploadedFiles: UploadedFile[] = [];
+      let processedContracts = 0;
+      const startTime = performance.now();
       for (const matchType of ["full_match", "partial_match"]) {
         for (const chainId of this.chainIds) {
           for (let i = 0; i < 256; i++) {
@@ -100,6 +102,8 @@ export default class RepositoryChainsArchiver {
             const localPath = path.join(this.exportPath, archiveName);
             let currentTarStream: tar.Pack | undefined;
 
+            const byteStartTime = performance.now();
+            let byteProcessedContracts = 0;
             for await (const entry of entries) {
               if (!currentTarStream) {
                 currentTarStream = createPack(localPath);
@@ -117,7 +121,24 @@ export default class RepositoryChainsArchiver {
               }
 
               await this.addFileToPack(currentTarStream, filePath);
+              byteProcessedContracts++;
+              processedContracts++;
             }
+            const durationInSeconds =
+              (performance.now() - byteStartTime) / 1000;
+            console.log(
+              `Processed ${matchType} ${chainId} ${byte} in ${durationInSeconds.toFixed(
+                4
+              )}s with a rate of ${(
+                byteProcessedContracts / durationInSeconds
+              ).toFixed(2)} contracts/s`
+            );
+            console.log(
+              `Total processing rate at ${(
+                processedContracts /
+                ((performance.now() - startTime) / 1000)
+              ).toFixed(2)} contracts/s`
+            );
 
             if (currentTarStream) {
               currentTarStream.finalize();
@@ -160,6 +181,7 @@ export default class RepositoryChainsArchiver {
   }
 
   private async uploadFile(localPath: string, s3Key: string): Promise<void> {
+    const startTime = performance.now();
     const fileContent = await fs.promises.readFile(localPath);
     await this.s3Client.send(
       new PutObjectCommand({
@@ -168,7 +190,13 @@ export default class RepositoryChainsArchiver {
         Body: fileContent,
       })
     );
-    console.log(`Uploaded ${s3Key} to ${this.s3BucketName}`);
+
+    const durationInSeconds = (performance.now() - startTime) / 1000;
+    console.log(
+      `Uploaded ${s3Key} to ${this.s3BucketName} in ${durationInSeconds.toFixed(
+        4
+      )}s`
+    );
   }
 
   private async deleteOldBackups(): Promise<void> {
