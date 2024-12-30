@@ -17,6 +17,11 @@ interface S3Config {
   endpoint?: string;
 }
 
+interface UploadedFile {
+  path: string;
+  sizeInBytes: number;
+}
+
 // Function to create a tar stream for a specific byte
 function createPack(outputPath: string): tar.Pack {
   const yourTarball = fs.createWriteStream(outputPath);
@@ -76,7 +81,7 @@ export default class RepositoryChainsArchiver {
     const backupName = `sourcify-repository-${timestampString}`;
 
     try {
-      const uploadedFiles: { path: string; sizeInBytes: number }[] = [];
+      const uploadedFiles: UploadedFile[] = [];
       for (const matchType of ["full_match", "partial_match"]) {
         for (const chainId of this.chainIds) {
           for (let i = 0; i < 256; i++) {
@@ -116,21 +121,9 @@ export default class RepositoryChainsArchiver {
 
             if (currentTarStream) {
               currentTarStream.finalize();
-
-              // Upload file
               const s3Key = `${backupName}/${archiveName}`;
-              await this.uploadFile(localPath, s3Key);
-              uploadedFiles.push({
-                path: `/${s3Key}`,
-                sizeInBytes: fs.statSync(localPath).size,
-              });
-
-              // Delete file
-              await fs.promises.rm(localPath, {
-                recursive: true,
-                force: true,
-              });
-              console.log(`Deleted local file: ${localPath}`);
+              // Don't await this in order to process the next byte concurrently
+              this.uploadAndDeleteFile(localPath, s3Key, uploadedFiles);
             }
           }
         }
@@ -145,6 +138,25 @@ export default class RepositoryChainsArchiver {
       );
     }
     console.log("Done");
+  }
+
+  private async uploadAndDeleteFile(
+    localPath: string,
+    s3Key: string,
+    uploadedFiles: UploadedFile[]
+  ): Promise<void> {
+    await this.uploadFile(localPath, s3Key);
+    const fileStats = await fs.promises.stat(localPath);
+    uploadedFiles.push({
+      path: `/${s3Key}`,
+      sizeInBytes: fileStats.size,
+    });
+
+    await fs.promises.rm(localPath, {
+      recursive: true,
+      force: true,
+    });
+    console.log(`Deleted local file: ${localPath}`);
   }
 
   private async uploadFile(localPath: string, s3Key: string): Promise<void> {
