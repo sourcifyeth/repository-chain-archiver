@@ -8,6 +8,8 @@ import {
   ListObjectsV2Command,
   DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
+import { Upload } from "@aws-sdk/lib-storage";
+import { PassThrough, Readable } from "stream";
 
 interface S3Config {
   bucketName: string;
@@ -17,12 +19,22 @@ interface S3Config {
   endpoint?: string;
 }
 
-// Function to create a tar stream for a specific byte
-function createPack(outputPath: string): tar.Pack {
-  const yourTarball = fs.createWriteStream(outputPath);
-  const pack = tar.pack();
-  pack.pipe(yourTarball);
-  return pack;
+interface UploadedFile {
+  path: string;
+  sizeInBytes: number;
+}
+
+async function countStreamedData(stream: Readable): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let totalBytes = 0;
+    stream.on("data", (chunk) => {
+      totalBytes += chunk.length;
+    });
+
+    stream.on("end", () => {
+      resolve(totalBytes);
+    });
+  });
 }
 
 export default class RepositoryChainsArchiver {
@@ -76,7 +88,9 @@ export default class RepositoryChainsArchiver {
     const backupName = `sourcify-repository-${timestampString}`;
 
     try {
-      const uploadedFiles: { path: string; sizeInBytes: number }[] = [];
+      const uploadedFiles: UploadedFile[] = [];
+      let processedContracts = 0;
+      const startTime = performance.now();
       for (const matchType of ["full_match", "partial_match"]) {
         for (const chainId of this.chainIds) {
           for (let i = 0; i < 256; i++) {
@@ -92,12 +106,23 @@ export default class RepositoryChainsArchiver {
 
             // Create tar stream for current byte
             const archiveName = `${matchType}.${chainId}.${byte}.tar.gz`;
-            const localPath = path.join(this.exportPath, archiveName);
-            let currentTarStream: tar.Pack | undefined;
+            const s3Key = `${backupName}/${archiveName}`;
 
+            let currentTarStream: tar.Pack | undefined;
+            let filePromises: Promise<unknown>[] = [];
+
+            const byteStartTime = performance.now();
+            let byteProcessedContracts = 0;
             for await (const entry of entries) {
               if (!currentTarStream) {
-                currentTarStream = createPack(localPath);
+                currentTarStream = tar.pack();
+                countStreamedData(currentTarStream).then((size) => {
+                  uploadedFiles.push({
+                    path: `/${s3Key}`,
+                    sizeInBytes: size,
+                  });
+                });
+                this.streamUpload(s3Key, currentTarStream);
               }
 
               const relativePath = entry.toString();
@@ -111,26 +136,29 @@ export default class RepositoryChainsArchiver {
                 continue;
               }
 
-              await this.addFileToPack(currentTarStream, filePath);
+              filePromises.push(this.addFileToPack(currentTarStream, filePath));
+              byteProcessedContracts++;
+              processedContracts++;
             }
+            const durationInSeconds =
+              (performance.now() - byteStartTime) / 1000;
+            console.log(
+              `Processed ${matchType} ${chainId} ${byte} in ${durationInSeconds.toFixed(
+                4
+              )}s with a rate of ${(
+                byteProcessedContracts / durationInSeconds
+              ).toFixed(2)} contracts/s`
+            );
+            console.log(
+              `Total processing rate at ${(
+                processedContracts /
+                ((performance.now() - startTime) / 1000)
+              ).toFixed(2)} contracts/s`
+            );
 
+            await Promise.all(filePromises);
             if (currentTarStream) {
               currentTarStream.finalize();
-
-              // Upload file
-              const s3Key = `${backupName}/${archiveName}`;
-              await this.uploadFile(localPath, s3Key);
-              uploadedFiles.push({
-                path: `/${s3Key}`,
-                sizeInBytes: fs.statSync(localPath).size,
-              });
-
-              // Delete file
-              await fs.promises.rm(localPath, {
-                recursive: true,
-                force: true,
-              });
-              console.log(`Deleted local file: ${localPath}`);
             }
           }
         }
@@ -147,7 +175,22 @@ export default class RepositoryChainsArchiver {
     console.log("Done");
   }
 
+  private async streamUpload(s3Key: string, stream: Readable) {
+    const parallelUploads3 = new Upload({
+      client: this.s3Client,
+      queueSize: 4,
+      leavePartsOnError: false,
+      params: {
+        Bucket: this.s3BucketName,
+        Key: s3Key,
+        Body: stream.pipe(new PassThrough()),
+      },
+    });
+    return parallelUploads3.done();
+  }
+
   private async uploadFile(localPath: string, s3Key: string): Promise<void> {
+    const startTime = performance.now();
     const fileContent = await fs.promises.readFile(localPath);
     await this.s3Client.send(
       new PutObjectCommand({
@@ -156,7 +199,13 @@ export default class RepositoryChainsArchiver {
         Body: fileContent,
       })
     );
-    console.log(`Uploaded ${s3Key} to ${this.s3BucketName}`);
+
+    const durationInSeconds = (performance.now() - startTime) / 1000;
+    console.log(
+      `Uploaded ${s3Key} to ${this.s3BucketName} in ${durationInSeconds.toFixed(
+        4
+      )}s`
+    );
   }
 
   private async deleteOldBackups(): Promise<void> {
