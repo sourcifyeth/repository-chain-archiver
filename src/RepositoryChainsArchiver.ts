@@ -7,7 +7,6 @@ import {
   PutObjectCommand,
   ListObjectsV2Command,
   DeleteObjectsCommand,
-  CompleteMultipartUploadCommandOutput,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import { PassThrough, Readable } from "stream";
@@ -23,14 +22,6 @@ interface S3Config {
 interface UploadedFile {
   path: string;
   sizeInBytes: number;
-}
-
-// Function to create a tar stream for a specific byte
-function createPack(outputPath: string): tar.Pack {
-  const yourTarball = fs.createWriteStream(outputPath);
-  const pack = tar.pack();
-  pack.pipe(yourTarball);
-  return pack;
 }
 
 async function countStreamedData(stream: Readable): Promise<number> {
@@ -196,25 +187,6 @@ export default class RepositoryChainsArchiver {
       },
     });
     return parallelUploads3.done();
-  }
-
-  private async uploadAndDeleteFile(
-    localPath: string,
-    s3Key: string,
-    uploadedFiles: UploadedFile[]
-  ): Promise<void> {
-    await this.uploadFile(localPath, s3Key);
-    const fileStats = await fs.promises.stat(localPath);
-    uploadedFiles.push({
-      path: `/${s3Key}`,
-      sizeInBytes: fileStats.size,
-    });
-
-    await fs.promises.rm(localPath, {
-      recursive: true,
-      force: true,
-    });
-    console.log(`Deleted local file: ${localPath}`);
   }
 
   private async uploadFile(localPath: string, s3Key: string): Promise<void> {
