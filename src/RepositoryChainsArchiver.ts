@@ -22,7 +22,7 @@ interface S3Config {
 
 interface UploadedFile {
   path: string;
-  sizeInBytes?: number;
+  sizeInBytes: number;
 }
 
 // Function to create a tar stream for a specific byte
@@ -31,6 +31,19 @@ function createPack(outputPath: string): tar.Pack {
   const pack = tar.pack();
   pack.pipe(yourTarball);
   return pack;
+}
+
+async function countStreamedData(stream: Readable): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let totalBytes = 0;
+    stream.on("data", (chunk) => {
+      totalBytes += chunk.length;
+    });
+
+    stream.on("end", () => {
+      resolve(totalBytes);
+    });
+  });
 }
 
 export default class RepositoryChainsArchiver {
@@ -103,9 +116,6 @@ export default class RepositoryChainsArchiver {
             // Create tar stream for current byte
             const archiveName = `${matchType}.${chainId}.${byte}.tar.gz`;
             const s3Key = `${backupName}/${archiveName}`;
-            uploadedFiles.push({
-              path: `/${s3Key}`,
-            });
 
             let currentTarStream: tar.Pack | undefined;
             let filePromises: Promise<unknown>[] = [];
@@ -115,6 +125,12 @@ export default class RepositoryChainsArchiver {
             for await (const entry of entries) {
               if (!currentTarStream) {
                 currentTarStream = tar.pack();
+                countStreamedData(currentTarStream).then((size) => {
+                  uploadedFiles.push({
+                    path: `/${s3Key}`,
+                    sizeInBytes: size,
+                  });
+                });
                 this.streamUpload(s3Key, currentTarStream);
               }
 
